@@ -150,8 +150,22 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
         });
-        if (!res.ok) throw new Error('Errore API Gemini');
+        
         const data = await res.json();
+        
+        if (!res.ok) {
+          console.error('Errore Gemini:', data);
+          if (data.error) {
+            throw new Error(`Gemini: ${data.error.message || data.error.status}`);
+          }
+          throw new Error('Errore API Gemini. Verifica la chiave API nelle impostazioni.');
+        }
+        
+        if (!data.candidates || !data.candidates[0]) {
+          console.error('Risposta Gemini:', data);
+          throw new Error('Risposta non valida da Gemini');
+        }
+        
         return data.candidates[0].content.parts[0].text;
       } else if (provider === 'openai') {
         const res = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -166,8 +180,14 @@
             max_tokens: 1000
           })
         });
-        if (!res.ok) throw new Error('Errore API OpenAI');
+        
         const data = await res.json();
+        
+        if (!res.ok) {
+          console.error('Errore OpenAI:', data);
+          throw new Error(`OpenAI: ${data.error?.message || 'Errore API'}`);
+        }
+        
         return data.choices[0].message.content;
       }
     };
