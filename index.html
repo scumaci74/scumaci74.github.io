@@ -12,12 +12,21 @@
       to { transform: translateX(0); opacity: 1; }
     }
     .animate-slide-in { animation: slideIn 0.3s ease-out; }
+    .line-clamp-2 {
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
   </style>
 </head>
 <body class="bg-gradient-to-br from-blue-50 via-white to-purple-50">
   <div id="app"></div>
 
   <script>
+    // CORS Proxy
+    const CORS_PROXY = 'https://api.allorigins.win/raw?url=';
+
     // State
     let state = {
       articles: [],
@@ -78,7 +87,7 @@
       });
     };
 
-    // Utility Functions
+    // Utilities
     const showNotification = (message, type = 'success') => {
       state.notification = { message, type };
       render();
@@ -89,35 +98,47 @@
     };
 
     const fetchArticleContent = async (url) => {
-      const response = await fetch(url);
-      const html = await response.text();
-      const parser = new DOMParser();
-      const doc = parser.parseFromString(html, 'text/html');
-      
-      ['script', 'style', 'nav', 'footer', 'header', 'iframe', 'aside'].forEach(tag => {
-        doc.querySelectorAll(tag).forEach(el => el.remove());
-      });
-      
-      const title = doc.querySelector('title')?.textContent || 
-                   doc.querySelector('h1')?.textContent || 
-                   'Articolo senza titolo';
-      
-      const article = doc.querySelector('article') || 
-                     doc.querySelector('main') || 
-                     doc.querySelector('.content') ||
-                     doc.body;
-      
-      const content = article.innerText.trim().substring(0, 50000);
-      
-      return {
-        id: Date.now(),
-        url,
-        title: title.substring(0, 200).trim(),
-        content,
-        savedAt: new Date().toISOString(),
-        summary: null,
-        translation: null
-      };
+      try {
+        const proxyUrl = CORS_PROXY + encodeURIComponent(url);
+        const response = await fetch(proxyUrl);
+        
+        if (!response.ok) throw new Error('Impossibile scaricare la pagina');
+        
+        const html = await response.text();
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(html, 'text/html');
+        
+        ['script', 'style', 'nav', 'footer', 'header', 'iframe', 'aside', 'noscript'].forEach(tag => {
+          doc.querySelectorAll(tag).forEach(el => el.remove());
+        });
+        
+        const title = doc.querySelector('title')?.textContent || 
+                     doc.querySelector('h1')?.textContent || 
+                     'Articolo';
+        
+        const article = doc.querySelector('article') || 
+                       doc.querySelector('main') || 
+                       doc.querySelector('.content') ||
+                       doc.body;
+        
+        const content = article.innerText.trim().replace(/\s+/g, ' ').substring(0, 50000);
+        
+        if (!content || content.length < 100) {
+          throw new Error('Contenuto troppo breve');
+        }
+        
+        return {
+          id: Date.now(),
+          url,
+          title: title.substring(0, 200).trim(),
+          content,
+          savedAt: new Date().toISOString(),
+          summary: null,
+          translation: null
+        };
+      } catch (error) {
+        throw new Error('Impossibile scaricare l\'articolo');
+      }
     };
 
     const callAI = async (prompt) => {
@@ -127,9 +148,7 @@
         const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [{ parts: [{ text: prompt }] }]
-          })
+          body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
         });
         if (!res.ok) throw new Error('Errore API Gemini');
         const data = await res.json();
@@ -150,30 +169,20 @@
         if (!res.ok) throw new Error('Errore API OpenAI');
         const data = await res.json();
         return data.choices[0].message.content;
-      } else if (provider === 'claude') {
-        const res = await fetch('https://api.anthropic.com/v1/messages', {
-          method: 'POST',
-          headers: { 
-            'Content-Type': 'application/json', 
-            'x-api-key': apiKey,
-            'anthropic-version': '2023-06-01'
-          },
-          body: JSON.stringify({
-            model: 'claude-3-5-sonnet-20241022',
-            max_tokens: 1024,
-            messages: [{ role: 'user', content: prompt }]
-          })
-        });
-        if (!res.ok) throw new Error('Errore API Claude');
-        const data = await res.json();
-        return data.content[0].text;
       }
     };
 
     // Actions
-    const addArticle = async () => {
+    window.addArticle = async () => {
       if (!state.urlInput.trim()) {
         showNotification('Inserisci un URL valido', 'error');
+        return;
+      }
+
+      try {
+        new URL(state.urlInput);
+      } catch (e) {
+        showNotification('URL non valido', 'error');
         return;
       }
 
@@ -188,73 +197,70 @@
         state.showAddUrl = false;
         showNotification('✅ Articolo salvato!');
       } catch (error) {
-        showNotification('Errore: ' + error.message, 'error');
+        showNotification('❌ ' + error.message, 'error');
       } finally {
         state.loading = false;
         render();
       }
     };
 
-    const summarize = async (article) => {
+    window.summarizeArticle = async (articleId) => {
       if (!state.apiKey) {
-        showNotification('⚠️ Configura la chiave API', 'error');
+        showNotification('⚠️ Configura API', 'error');
         return;
       }
 
+      const article = state.articles.find(a => a.id === articleId);
       state.loading = true;
       render();
 
       try {
-        const prompt = `Crea un riassunto dettagliato in italiano di questo articolo, includendo i punti chiave:\n\n${article.content.substring(0, 12000)}`;
+        const prompt = `Riassunto dettagliato in italiano:\n\n${article.content.substring(0, 12000)}`;
         const summary = await callAI(prompt);
         
         article.summary = summary;
         await saveArticleToDB(article);
         
-        const index = state.articles.findIndex(a => a.id === article.id);
-        if (index !== -1) state.articles[index] = article;
-        if (state.selectedArticle?.id === article.id) state.selectedArticle = article;
-        
+        if (state.selectedArticle?.id === articleId) state.selectedArticle = article;
         showNotification('✨ Riassunto generato!');
       } catch (error) {
-        showNotification('Errore: ' + error.message, 'error');
+        showNotification('❌ ' + error.message, 'error');
       } finally {
         state.loading = false;
         render();
       }
     };
 
-    const translate = async (article) => {
+    window.translateArticle = async (articleId) => {
       if (!state.apiKey) {
-        showNotification('⚠️ Configura la chiave API', 'error');
+        showNotification('⚠️ Configura API', 'error');
         return;
       }
 
+      const article = state.articles.find(a => a.id === articleId);
       state.loading = true;
       render();
 
       try {
-        const prompt = `Traduci questo testo in italiano mantenendo la formattazione:\n\n${article.content.substring(0, 12000)}`;
+        const prompt = `Traduci in italiano:\n\n${article.content.substring(0, 12000)}`;
         const translation = await callAI(prompt);
         
         article.translation = translation;
         await saveArticleToDB(article);
         
-        const index = state.articles.findIndex(a => a.id === article.id);
-        if (index !== -1) state.articles[index] = article;
-        if (state.selectedArticle?.id === article.id) state.selectedArticle = article;
-        
-        showNotification('🌍 Traduzione completata!');
+        if (state.selectedArticle?.id === articleId) state.selectedArticle = article;
+        showNotification('🌍 Tradotto!');
       } catch (error) {
-        showNotification('Errore: ' + error.message, 'error');
+        showNotification('❌ ' + error.message, 'error');
       } finally {
         state.loading = false;
         render();
       }
     };
 
-    const exportArticle = (article) => {
-      const content = `${article.title}\n\nURL: ${article.url}\nSalvato: ${new Date(article.savedAt).toLocaleString('it-IT')}\n\n${article.summary ? `━━━ RIASSUNTO ━━━\n${article.summary}\n\n` : ''}${article.translation ? `━━━ TRADUZIONE ━━━\n${article.translation}\n\n` : ''}━━━ CONTENUTO ━━━\n${article.content}`;
+    window.exportArticle = (articleId) => {
+      const article = state.articles.find(a => a.id === articleId);
+      const content = `${article.title}\n\nURL: ${article.url}\n\n${article.summary ? 'RIASSUNTO:\n' + article.summary + '\n\n' : ''}${article.translation ? 'TRADUZIONE:\n' + article.translation + '\n\n' : ''}CONTENUTO:\n${article.content}`;
       const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -262,11 +268,11 @@
       a.download = `${article.title.substring(0, 50).replace(/[^a-z0-9]/gi, '_')}.txt`;
       a.click();
       URL.revokeObjectURL(url);
-      showNotification('📄 File esportato!');
+      showNotification('📄 Esportato!');
     };
 
-    const deleteArticle = async (id) => {
-      if (!confirm('Eliminare questo articolo?')) return;
+    window.deleteArticle = async (id) => {
+      if (!confirm('Eliminare?')) return;
       
       await deleteArticleFromDB(id);
       state.articles = state.articles.filter(a => a.id !== id);
@@ -276,15 +282,27 @@
         state.view = 'list';
       }
       
-      showNotification('🗑️ Articolo eliminato');
+      showNotification('🗑️ Eliminato');
       render();
     };
 
-    const saveSettings = () => {
+    window.selectArticle = (articleId) => {
+      state.selectedArticle = state.articles.find(a => a.id === articleId);
+      state.view = 'reader';
+      render();
+    };
+
+    window.backToList = () => {
+      state.view = 'list';
+      state.selectedArticle = null;
+      render();
+    };
+
+    window.saveSettings = () => {
       localStorage.setItem('apiKey', state.apiKey);
       localStorage.setItem('provider', state.provider);
       state.showSettings = false;
-      showNotification('Impostazioni salvate!');
+      showNotification('✅ Salvato!');
       render();
     };
 
@@ -295,114 +313,81 @@
         a.content.toLowerCase().includes(state.searchQuery.toLowerCase())
       );
 
-      const app = document.getElementById('app');
-      app.innerHTML = `
-        <!-- Header -->
-        <header class="bg-white border-b border-slate-200 sticky top-0 z-10 shadow-sm">
+      document.getElementById('app').innerHTML = `
+        <header class="bg-white border-b sticky top-0 z-10 shadow-sm">
           <div class="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
             <div class="flex items-center gap-3">
-              <div class="w-10 h-10 bg-gradient-to-br from-blue-600 to-purple-600 rounded-xl flex items-center justify-center shadow">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2">
-                  <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/>
-                  <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>
-                </svg>
+              <div class="w-10 h-10 bg-gradient-to-br from-blue-600 to-purple-600 rounded-xl flex items-center justify-center">
+                <span class="text-2xl">📖</span>
               </div>
-              <h1 class="text-xl font-bold text-slate-800">Offline Reader</h1>
+              <h1 class="text-xl font-bold">Offline Reader</h1>
             </div>
             <div class="flex gap-2">
-              <button onclick="state.showAddUrl = true; render();" class="px-4 py-2 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-lg hover:shadow-lg transition flex items-center gap-2 font-medium">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <line x1="12" y1="5" x2="12" y2="19"/>
-                  <line x1="5" y1="12" x2="19" y2="12"/>
-                </svg>
-                <span class="hidden sm:inline">Aggiungi</span>
+              <button onclick="state.showAddUrl = true; render();" class="px-4 py-2 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-lg hover:shadow-lg transition font-medium">
+                ➕ <span class="hidden sm:inline">Aggiungi</span>
               </button>
-              <button onclick="state.showSettings = true; render();" class="p-2 text-slate-600 hover:bg-slate-100 rounded-lg transition">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <circle cx="12" cy="12" r="3"/>
-                  <path d="M12 1v6m0 6v6"/>
-                </svg>
+              <button onclick="state.showSettings = true; render();" class="p-2 hover:bg-slate-100 rounded-lg">
+                ⚙️
               </button>
             </div>
           </div>
         </header>
 
-        <!-- Notification -->
         ${state.notification ? `
-          <div class="fixed top-20 right-4 left-4 sm:left-auto sm:w-96 z-50 px-4 py-3 rounded-lg shadow-2xl flex items-center gap-2 animate-slide-in ${state.notification.type === 'success' ? 'bg-green-500' : 'bg-red-500'} text-white">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <polyline points="20 6 9 17 4 12"/>
-            </svg>
+          <div class="fixed top-20 right-4 left-4 sm:left-auto sm:w-96 z-50 px-4 py-3 rounded-lg shadow-2xl animate-slide-in ${state.notification.type === 'success' ? 'bg-green-500' : 'bg-red-500'} text-white">
             ${state.notification.message}
           </div>
         ` : ''}
 
-        <!-- Settings Modal -->
         ${state.showSettings ? `
           <div class="fixed inset-0 bg-black bg-opacity-50 z-40 flex items-center justify-center p-4">
-            <div class="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl">
-              <div class="flex items-center justify-between mb-6">
-                <h2 class="text-2xl font-bold text-slate-800">⚙️ Impostazioni</h2>
-                <button onclick="state.showSettings = false; render();" class="text-slate-400 hover:text-slate-600">
-                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <line x1="18" y1="6" x2="6" y2="18"/>
-                    <line x1="6" y1="6" x2="18" y2="18"/>
-                  </svg>
-                </button>
+            <div class="bg-white rounded-2xl max-w-md w-full p-6">
+              <div class="flex justify-between mb-6">
+                <h2 class="text-2xl font-bold">⚙️ Impostazioni</h2>
+                <button onclick="state.showSettings = false; render();" class="text-slate-400">✖️</button>
               </div>
               
               <div class="space-y-4">
                 <div>
-                  <label class="block text-sm font-semibold text-slate-700 mb-2">Provider AI</label>
-                  <select onchange="state.provider = this.value;" class="w-full px-4 py-3 border-2 border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500">
-                    <option value="gemini" ${state.provider === 'gemini' ? 'selected' : ''}>✨ Gemini (Google) - GRATIS</option>
-                    <option value="openai" ${state.provider === 'openai' ? 'selected' : ''}>🤖 OpenAI (GPT-4)</option>
-                    <option value="claude" ${state.provider === 'claude' ? 'selected' : ''}>🧠 Claude (Anthropic)</option>
+                  <label class="block text-sm font-semibold mb-2">Provider AI</label>
+                  <select onchange="state.provider = this.value;" class="w-full px-4 py-3 border-2 rounded-xl">
+                    <option value="gemini" ${state.provider === 'gemini' ? 'selected' : ''}>✨ Gemini (GRATIS)</option>
+                    <option value="openai" ${state.provider === 'openai' ? 'selected' : ''}>🤖 OpenAI</option>
                   </select>
                 </div>
                 
                 <div>
-                  <label class="block text-sm font-semibold text-slate-700 mb-2">Chiave API</label>
+                  <label class="block text-sm font-semibold mb-2">Chiave API</label>
                   <input 
                     type="password" 
                     value="${state.apiKey}" 
                     oninput="state.apiKey = this.value;"
                     placeholder="${state.provider === 'gemini' ? 'AIza...' : 'sk-...'}"
-                    class="w-full px-4 py-3 border-2 border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500"
+                    class="w-full px-4 py-3 border-2 rounded-xl"
                   />
                   <p class="text-xs text-slate-500 mt-2">
-                    ${state.provider === 'gemini' 
-                      ? '🔑 Ottieni GRATIS su aistudio.google.com' 
-                      : '🔒 Salvata in modo sicuro nel browser'}
+                    ${state.provider === 'gemini' ? '🔑 GRATIS su aistudio.google.com' : '🔒 Salvata nel browser'}
                   </p>
                 </div>
 
-                <div class="pt-4 border-t border-slate-200">
-                  <div class="bg-slate-50 rounded-lg p-3">
-                    <p class="text-sm"><strong>${state.articles.length}</strong> articoli salvati</p>
-                  </div>
+                <div class="bg-slate-50 rounded-lg p-3">
+                  <p class="text-sm"><strong>${state.articles.length}</strong> articoli salvati</p>
                 </div>
               </div>
               
-              <button onclick="saveSettings();" class="w-full mt-6 px-4 py-3 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-xl hover:shadow-lg transition font-semibold">
-                Salva Impostazioni
+              <button onclick="saveSettings();" class="w-full mt-6 px-4 py-3 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-xl font-semibold">
+                Salva
               </button>
             </div>
           </div>
         ` : ''}
 
-        <!-- Add URL Modal -->
         ${state.showAddUrl ? `
           <div class="fixed inset-0 bg-black bg-opacity-50 z-40 flex items-center justify-center p-4">
-            <div class="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl">
-              <div class="flex items-center justify-between mb-6">
-                <h2 class="text-2xl font-bold text-slate-800">📥 Aggiungi Articolo</h2>
-                <button onclick="state.showAddUrl = false; render();" class="text-slate-400 hover:text-slate-600">
-                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <line x1="18" y1="6" x2="6" y2="18"/>
-                    <line x1="6" y1="6" x2="18" y2="18"/>
-                  </svg>
-                </button>
+            <div class="bg-white rounded-2xl max-w-md w-full p-6">
+              <div class="flex justify-between mb-6">
+                <h2 class="text-2xl font-bold">📥 Aggiungi</h2>
+                <button onclick="state.showAddUrl = false; state.urlInput = ''; render();" class="text-slate-400">✖️</button>
               </div>
               
               <input 
@@ -411,166 +396,126 @@
                 oninput="state.urlInput = this.value;"
                 onkeypress="if(event.key === 'Enter') addArticle();"
                 placeholder="https://example.com/articolo"
-                class="w-full px-4 py-3 border-2 border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 mb-4"
-                autofocus
+                class="w-full px-4 py-3 border-2 rounded-xl mb-4"
               />
               
               <button 
                 onclick="addArticle();" 
                 ${state.loading ? 'disabled' : ''}
-                class="w-full px-4 py-3 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-xl hover:shadow-lg transition font-semibold disabled:opacity-50"
+                class="w-full px-4 py-3 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-xl font-semibold disabled:opacity-50"
               >
-                ${state.loading ? '⏳ Download in corso...' : '💾 Scarica per Lettura Offline'}
+                ${state.loading ? '⏳ Download...' : '💾 Scarica'}
               </button>
             </div>
           </div>
         ` : ''}
 
-        <!-- Main Content -->
         <main class="max-w-6xl mx-auto px-4 py-6">
           ${state.view === 'list' ? `
-            <!-- Search Bar -->
             ${state.articles.length > 0 ? `
-              <div class="mb-6 relative">
-                <svg class="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <circle cx="11" cy="11" r="8"/>
-                  <line x1="21" y1="21" x2="16.65" y2="16.65"/>
-                </svg>
+              <div class="mb-6">
                 <input 
                   type="text" 
                   value="${state.searchQuery}"
                   oninput="state.searchQuery = this.value; render();"
-                  placeholder="Cerca negli articoli salvati..."
-                  class="w-full pl-12 pr-4 py-3 border-2 border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500"
+                  placeholder="🔍 Cerca..."
+                  class="w-full px-4 py-3 border-2 rounded-xl"
                 />
               </div>
             ` : ''}
 
-            <!-- Articles List -->
-            <div class="grid gap-4">
-              ${filteredArticles.length === 0 && state.articles.length === 0 ? `
-                <div class="text-center py-20">
-                  <div class="w-20 h-20 bg-gradient-to-br from-blue-100 to-purple-100 rounded-full flex items-center justify-center mx-auto mb-6">
-                    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2">
-                      <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/>
-                      <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>
-                    </svg>
-                  </div>
-                  <h3 class="text-xl font-bold text-slate-800 mb-2">Nessun articolo salvato</h3>
-                  <p class="text-slate-500 mb-6">Inizia salvando il tuo primo articolo</p>
-                  <button onclick="state.showAddUrl = true; render();" class="px-6 py-3 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-xl hover:shadow-lg transition inline-flex items-center gap-2 font-semibold">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                      <line x1="12" y1="5" x2="12" y2="19"/>
-                      <line x1="5" y1="12" x2="19" y2="12"/>
-                    </svg>
-                    Aggiungi Primo Articolo
-                  </button>
-                </div>
-              ` : filteredArticles.length === 0 ? `
-                <div class="text-center py-16">
-                  <p class="text-slate-500 text-lg">Nessun risultato per "${state.searchQuery}"</p>
-                </div>
-              ` : filteredArticles.map(article => `
-                <div class="bg-white rounded-xl p-5 shadow-sm hover:shadow-xl transition-all border border-slate-100 hover:border-blue-200">
-                  <h3 class="font-bold text-slate-800 text-lg mb-2 line-clamp-2">${article.title}</h3>
-                  <p class="text-sm text-slate-500 mb-3 flex items-center gap-2">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
-                      <polyline points="15 3 21 3 21 9"/>
-                      <line x1="10" y1="14" x2="21" y2="3"/>
-                    </svg>
-                    ${new URL(article.url).hostname}
-                    <span class="text-slate-300">•</span>
-                    ${new Date(article.savedAt).toLocaleDateString('it-IT')}
-                  </p>
-                  <p class="text-slate-600 text-sm line-clamp-2 mb-4">${article.content.substring(0, 150)}...</p>
-                  <div class="flex flex-wrap gap-2">
-                    <button onclick="state.selectedArticle = ${JSON.stringify(article).replace(/"/g, '&quot;')}; state.view = 'reader'; render();" class="px-3 py-1.5 bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 transition text-sm font-medium">
-                      📖 Leggi
-                    </button>
-                    <button onclick='summarize(${JSON.stringify(article)});' ${state.loading ? 'disabled' : ''} class="px-3 py-1.5 bg-purple-50 text-purple-700 rounded-lg hover:bg-purple-100 transition text-sm font-medium disabled:opacity-50">
-                      ✨ Riassumi
-                    </button>
-                    <button onclick='translate(${JSON.stringify(article)});' ${state.loading ? 'disabled' : ''} class="px-3 py-1.5 bg-green-50 text-green-700 rounded-lg hover:bg-green-100 transition text-sm font-medium disabled:opacity-50">
-                      🌍 Traduci
-                    </button>
-                    <button onclick='exportArticle(${JSON.stringify(article)});' class="px-3 py-1.5 bg-orange-50 text-orange-700 rounded-lg hover:bg-orange-100 transition text-sm font-medium">
-                      📄 Esporta
-                    </button>
-                    <button onclick="deleteArticle(${article.id});" class="px-3 py-1.5 bg-red-50 text-red-700 rounded-lg hover:bg-red-100 transition text-sm font-medium">
-                      🗑️
-                    </button>
-                  </div>
-                </div>
-              `).join('')}
-            </div>
-          ` : `
-            <!-- Reader View -->
-            <div class="bg-white rounded-xl shadow-lg border border-slate-200">
-              <div class="p-6 border-b border-slate-200">
-                <button onclick="state.view = 'list'; state.selectedArticle = null; render();" class="text-blue-600 hover:text-blue-700 mb-4 flex items-center gap-2 font-medium">
-                  ← Torna alla lista
+            ${filteredArticles.length === 0 && state.articles.length === 0 ? `
+              <div class="text-center py-20">
+                <div class="text-6xl mb-6">📖</div>
+                <h3 class="text-xl font-bold mb-2">Nessun articolo</h3>
+                <p class="text-slate-500 mb-6">Inizia salvando un articolo</p>
+                <button onclick="state.showAddUrl = true; render();" class="px-6 py-3 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-xl font-semibold">
+                  ➕ Aggiungi Primo Articolo
                 </button>
-                <h2 class="text-2xl font-bold text-slate-800 mb-3">${state.selectedArticle?.title}</h2>
-                <a href="${state.selectedArticle?.url}" target="_blank" class="text-sm text-blue-600 hover:underline flex items-center gap-2">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
-                    <polyline points="15 3 21 3 21 9"/>
-                    <line x1="10" y1="14" x2="21" y2="3"/>
-                  </svg>
+              </div>
+            ` : `
+              <div class="grid gap-4">
+                ${filteredArticles.map(a => `
+                  <div class="bg-white rounded-xl p-5 shadow-sm hover:shadow-xl transition border">
+                    <h3 class="font-bold text-lg mb-2">${a.title}</h3>
+                    <p class="text-sm text-slate-500 mb-3">
+                      ${new URL(a.url).hostname} • ${new Date(a.savedAt).toLocaleDateString('it-IT')}
+                    </p>
+                    <p class="text-sm text-slate-600 mb-4 line-clamp-2">${a.content.substring(0, 150)}...</p>
+                    <div class="flex flex-wrap gap-2">
+                      <button onclick="selectArticle(${a.id})" class="px-3 py-1.5 bg-blue-50 text-blue-700 rounded-lg text-sm font-medium">
+                        📖 Leggi
+                      </button>
+                      <button onclick="summarizeArticle(${a.id})" ${state.loading ? 'disabled' : ''} class="px-3 py-1.5 bg-purple-50 text-purple-700 rounded-lg text-sm font-medium disabled:opacity-50">
+                        ✨ Riassumi
+                      </button>
+                      <button onclick="translateArticle(${a.id})" ${state.loading ? 'disabled' : ''} class="px-3 py-1.5 bg-green-50 text-green-700 rounded-lg text-sm font-medium disabled:opacity-50">
+                        🌍 Traduci
+                      </button>
+                      <button onclick="exportArticle(${a.id})" class="px-3 py-1.5 bg-orange-50 text-orange-700 rounded-lg text-sm font-medium">
+                        📄 Esporta
+                      </button>
+                      <button onclick="deleteArticle(${a.id})" class="px-3 py-1.5 bg-red-50 text-red-700 rounded-lg text-sm font-medium">
+                        🗑️
+                      </button>
+                    </div>
+                  </div>
+                `).join('')}
+              </div>
+            `}
+          ` : `
+            <div class="bg-white rounded-xl shadow-lg">
+              <div class="p-6 border-b">
+                <button onclick="backToList()" class="text-blue-600 mb-4 font-medium">← Torna</button>
+                <h2 class="text-2xl font-bold mb-3">${state.selectedArticle?.title}</h2>
+                <a href="${state.selectedArticle?.url}" target="_blank" class="text-sm text-blue-600 hover:underline">
                   ${state.selectedArticle?.url}
                 </a>
-                <p class="text-sm text-slate-500 mt-2">Salvato il ${new Date(state.selectedArticle?.savedAt).toLocaleString('it-IT')}</p>
               </div>
 
-              <div class="p-6 border-b border-slate-200 flex flex-wrap gap-3">
-                <button onclick='summarize(state.selectedArticle);' ${state.loading ? 'disabled' : ''} class="px-5 py-2.5 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:shadow-lg transition font-semibold disabled:opacity-50">
-                  ✨ ${state.loading ? 'Generando...' : 'Genera Riassunto'}
+              <div class="p-6 border-b flex flex-wrap gap-3">
+                <button onclick="summarizeArticle(${state.selectedArticle?.id})" ${state.loading ? 'disabled' : ''} class="px-5 py-2.5 bg-purple-600 text-white rounded-lg font-semibold disabled:opacity-50">
+                  ✨ Riassumi
                 </button>
-                <button onclick='translate(state.selectedArticle);' ${state.loading ? 'disabled' : ''} class="px-5 py-2.5 bg-gradient-to-r from-green-600 to-teal-600 text-white rounded-lg hover:shadow-lg transition font-semibold disabled:opacity-50">
-                  🌍 ${state.loading ? 'Traducendo...' : 'Traduci'}
+                <button onclick="translateArticle(${state.selectedArticle?.id})" ${state.loading ? 'disabled' : ''} class="px-5 py-2.5 bg-green-600 text-white rounded-lg font-semibold disabled:opacity-50">
+                  🌍 Traduci
                 </button>
-                <button onclick='exportArticle(state.selectedArticle);' class="px-5 py-2.5 bg-gradient-to-r from-orange-600 to-red-600 text-white rounded-lg hover:shadow-lg transition font-semibold">
+                <button onclick="exportArticle(${state.selectedArticle?.id})" class="px-5 py-2.5 bg-orange-600 text-white rounded-lg font-semibold">
                   📄 Esporta
                 </button>
               </div>
 
               <div class="p-6 max-w-3xl mx-auto">
                 ${state.selectedArticle?.summary ? `
-                  <div class="mb-8 p-6 bg-gradient-to-br from-purple-50 to-pink-50 rounded-xl border-2 border-purple-200 shadow-sm">
-                    <h3 class="text-xl font-bold text-purple-900 mb-4 flex items-center gap-2">
-                      ✨ Riassunto AI
-                    </h3>
-                    <p class="text-slate-800 whitespace-pre-wrap leading-relaxed">${state.selectedArticle.summary}</p>
+                  <div class="mb-8 p-6 bg-purple-50 rounded-xl border-2 border-purple-200">
+                    <h3 class="text-xl font-bold text-purple-900 mb-4">✨ Riassunto</h3>
+                    <p class="whitespace-pre-wrap">${state.selectedArticle.summary}</p>
                   </div>
                 ` : ''}
 
                 ${state.selectedArticle?.translation ? `
-                  <div class="mb-8 p-6 bg-gradient-to-br from-green-50 to-teal-50 rounded-xl border-2 border-green-200 shadow-sm">
-                    <h3 class="text-xl font-bold text-green-900 mb-4 flex items-center gap-2">
-                      🌍 Traduzione
-                    </h3>
-                    <p class="text-slate-800 whitespace-pre-wrap leading-relaxed">${state.selectedArticle.translation}</p>
+                  <div class="mb-8 p-6 bg-green-50 rounded-xl border-2 border-green-200">
+                    <h3 class="text-xl font-bold text-green-900 mb-4">🌍 Traduzione</h3>
+                    <p class="whitespace-pre-wrap">${state.selectedArticle.translation}</p>
                   </div>
                 ` : ''}
 
                 <div>
-                  <h3 class="text-xl font-bold text-slate-800 mb-4 pb-3 border-b-2 border-slate-200">Contenuto Originale</h3>
-                  <p class="text-slate-700 whitespace-pre-wrap leading-relaxed">${state.selectedArticle?.content}</p>
+                  <h3 class="text-xl font-bold mb-4 pb-3 border-b-2">Contenuto</h3>
+                  <p class="whitespace-pre-wrap leading-relaxed">${state.selectedArticle?.content}</p>
                 </div>
               </div>
             </div>
           `}
         </main>
 
-        <!-- Footer -->
-        <footer class="max-w-6xl mx-auto px-4 py-6 text-center text-sm text-slate-500">
-          <p>💡 <strong>Tip:</strong> Installa come app su iPhone: Safari → Condividi → Aggiungi a Home</p>
+        <footer class="text-center py-6 text-sm text-slate-500">
+          <p>💡 Installa su iPhone: Safari → Condividi → Aggiungi a Home</p>
         </footer>
       `;
     };
 
-    // Initialize
+    // Init
     (async () => {
       state.articles = await getAllArticles();
       state.articles.sort((a, b) => new Date(b.savedAt) - new Date(a.savedAt));
