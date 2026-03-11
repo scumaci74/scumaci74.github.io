@@ -112,8 +112,13 @@
 
 <script>
 document.addEventListener('DOMContentLoaded', function() {
-  var apiKey = '';
+  var apiKey = localStorage.getItem('anthropic_key') || '';
   var currentMode = 'Entrambi';
+
+  if (apiKey) {
+    document.getElementById('setup').style.display = 'none';
+    document.getElementById('app').style.display = 'block';
+  }
 
   function isUrl(str) {
     try { new URL(str); return true; } catch(e) { return false; }
@@ -170,6 +175,7 @@ document.addEventListener('DOMContentLoaded', function() {
     var k = document.getElementById('apiKeyInput').value.trim();
     if (!k.startsWith('sk-')) { alert('Chiave non valida. Deve iniziare con sk-'); return; }
     apiKey = k;
+    localStorage.setItem('anthropic_key', k);
     document.getElementById('setup').style.display = 'none';
     document.getElementById('app').style.display = 'block';
   });
