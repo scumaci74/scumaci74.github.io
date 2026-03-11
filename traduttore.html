@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Traduci">
+<title>Traduttore AI</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: #f5f5f0;
+    min-height: 100vh;
+    padding: env(safe-area-inset-top, 20px) 16px env(safe-area-inset-bottom, 20px);
+  }
+  .container { max-width: 680px; margin: 0 auto; padding-top: 20px; }
+  h1 { font-size: 22px; font-weight: 700; color: #1a1a2e; }
+  .subtitle { color: #666; font-size: 14px; margin-top: 4px; margin-bottom: 20px; }
+  #setup { background: #fff; border-radius: 16px; padding: 20px; box-shadow: 0 2px 12px rgba(0,0,0,0.07); margin-bottom: 16px; }
+  #setup p { font-size: 14px; color: #444; margin-bottom: 10px; }
+  #setup a { color: #1a1a2e; }
+  #apiKeyInput {
+    width: 100%; padding: 10px 14px; border-radius: 10px;
+    border: 1.5px solid #ddd; font-size: 15px; outline: none;
+    font-family: monospace; margin-bottom: 10px; display: block;
+  }
+  #apiKeyInput:focus { border-color: #1a1a2e; }
+  .modes { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+  .mode-btn {
+    padding: 7px 14px; border-radius: 20px; font-size: 13px;
+    font-weight: 500; cursor: pointer; border: 1.5px solid #ddd;
+    background: #fff; color: #444;
+  }
+  .mode-btn.active { background: #1a1a2e; color: #fff; border-color: #1a1a2e; }
+  .input-box { background: #fff; border-radius: 16px; padding: 16px; box-shadow: 0 2px 12px rgba(0,0,0,0.07); margin-bottom: 12px; }
+  textarea {
+    width: 100%; min-height: 130px; border: none; outline: none;
+    resize: vertical; font-size: 15px; line-height: 1.6; color: #222;
+    background: transparent; font-family: inherit;
+  }
+  .input-footer { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; gap: 8px; flex-wrap: wrap; }
+  .input-hint { font-size: 12px; color: #aaa; flex: 1; }
+  .btn-clear {
+    padding: 10px 16px; border-radius: 12px; border: 1.5px solid #ddd;
+    background: #fff; color: #999; font-size: 14px; font-weight: 600; cursor: pointer;
+  }
+  .btn-open {
+    padding: 10px 16px; border-radius: 12px; border: 1.5px solid #1a1a2e;
+    background: #fff; color: #1a1a2e; font-size: 14px; font-weight: 600; cursor: pointer;
+  }
+  .btn-primary {
+    padding: 10px 24px; border-radius: 12px; border: none;
+    background: #1a1a2e; color: #fff; font-size: 15px; font-weight: 600; cursor: pointer;
+  }
+  .btn-primary:disabled { background: #ccc; cursor: default; }
+  .btn-small {
+    padding: 5px 12px; border-radius: 8px; border: 1.5px solid #ddd;
+    background: #fff; font-size: 12px; color: #666; cursor: pointer;
+  }
+  .result-box { background: #fff; border-radius: 16px; padding: 20px; box-shadow: 0 2px 12px rgba(0,0,0,0.07); }
+  .result-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
+  .result-label { font-size: 13px; font-weight: 600; color: #1a1a2e; }
+  .result-body { font-size: 15px; color: #222; line-height: 1.7; }
+  .result-body h3 { font-size: 15px; font-weight: 700; color: #1a1a2e; margin: 16px 0 8px; }
+  .result-body p { margin: 4px 0; }
+  .error { background: #fff0f0; border: 1px solid #ffcccc; border-radius: 12px; padding: 14px; margin-bottom: 12px; color: #c00; font-size: 14px; }
+  .loading { background: #fff; border-radius: 16px; padding: 24px; box-shadow: 0 2px 12px rgba(0,0,0,0.07); text-align: center; color: #888; font-size: 15px; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>Traduttore AI</h1>
+  <p class="subtitle">Incolla un URL o del testo — ottieni la traduzione in italiano</p>
+
+  <div id="setup">
+    <p>Inserisci la tua <strong>API key Anthropic</strong> per usare l'app.<br>
+    Trovala su <a href="https://console.anthropic.com" target="_blank">console.anthropic.com</a></p>
+    <input type="password" id="apiKeyInput" placeholder="sk-ant-..." autocomplete="off" />
+    <button class="btn-primary" id="btnSave">Salva e continua</button>
+  </div>
+
+  <div id="app" style="display:none">
+    <div class="modes">
+      <button class="mode-btn" data-mode="Traduzione completa">Traduzione completa</button>
+      <button class="mode-btn active" data-mode="Entrambi">Entrambi</button>
+      <button class="mode-btn" data-mode="Riassunto in italiano">Riassunto in italiano</button>
+    </div>
+    <div class="input-box">
+      <textarea id="inputText" placeholder="Incolla qui un URL (es. https://nytimes.com/...) oppure del testo in inglese..."></textarea>
+      <div class="input-footer">
+        <span class="input-hint" id="inputHint"></span>
+        <button class="btn-clear" id="btnClear" style="display:none">Cancella</button>
+        <button class="btn-open" id="btnOpen" style="display:none">Apri URL</button>
+        <button class="btn-primary" id="btnTranslate" disabled>Elabora</button>
+      </div>
+    </div>
+    <div id="error" class="error" style="display:none"></div>
+    <div id="loading" class="loading" style="display:none">Sto elaborando...</div>
+    <div id="result" class="result-box" style="display:none">
+      <div class="result-header">
+        <span class="result-label" id="resultLabel"></span>
+        <button class="btn-small" id="btnCopy">Copia</button>
+        <button class="btn-small" id="btnClose">Chiudi</button>
+      </div>
+      <div class="result-body" id="resultBody"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+  var apiKey = '';
+  var currentMode = 'Entrambi';
+
+  function isUrl(str) {
+    try { new URL(str); return true; } catch(e) { return false; }
+  }
+
+  function buildPrompt(content, inputType) {
+    var intro = inputType === 'url'
+      ? 'Il seguente e\' il contenuto estratto da un articolo web.'
+      : 'Il seguente e\' un testo in lingua straniera.';
+    if (currentMode === 'Traduzione completa') {
+      return intro + '\n\nTraduci in italiano in modo naturale e preciso, mantenendo il tono originale. Non aggiungere commenti, solo la traduzione.\n\n---\n' + content;
+    }
+    if (currentMode === 'Riassunto in italiano') {
+      return intro + '\n\nFai un riassunto in italiano chiaro e completo, organizzato in paragrafi. Evidenzia i punti principali.\n\n---\n' + content;
+    }
+    return intro + '\n\nFornisci:\n1. **TRADUZIONE COMPLETA** in italiano naturale e preciso\n2. **RIASSUNTO** con i punti chiave (3-5 punti)\n\nFormatta con intestazioni chiare.\n\n---\n' + content;
+  }
+
+  function renderMarkdown(text) {
+    var lines = text.split('\n');
+    var html = '';
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i];
+      if (/^\*\*.*\*\*$/.test(line)) {
+        html += '<h3>' + line.replace(/\*\*/g, '') + '</h3>';
+      } else if (line.trim() === '') {
+        html += '<div style="height:8px"></div>';
+      } else {
+        html += '<p>' + line.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>') + '</p>';
+      }
+    }
+    return html;
+  }
+
+  function clearAll() {
+    document.getElementById('inputText').value = '';
+    document.getElementById('inputHint').textContent = '';
+    document.getElementById('btnClear').style.display = 'none';
+    document.getElementById('btnOpen').style.display = 'none';
+    document.getElementById('btnTranslate').disabled = true;
+    document.getElementById('error').style.display = 'none';
+    document.getElementById('result').style.display = 'none';
+    document.getElementById('resultBody').innerHTML = '';
+  }
+
+  function resetBtn() {
+    document.getElementById('btnTranslate').disabled = false;
+    document.getElementById('btnTranslate').textContent = 'Elabora';
+    document.getElementById('loading').style.display = 'none';
+  }
+
+  // Save API key
+  document.getElementById('btnSave').addEventListener('click', function() {
+    var k = document.getElementById('apiKeyInput').value.trim();
+    if (!k.startsWith('sk-')) { alert('Chiave non valida. Deve iniziare con sk-'); return; }
+    apiKey = k;
+    document.getElementById('setup').style.display = 'none';
+    document.getElementById('app').style.display = 'block';
+  });
+
+  // Mode buttons
+  document.querySelectorAll('.mode-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      currentMode = btn.getAttribute('data-mode');
+      document.querySelectorAll('.mode-btn').forEach(function(b) { b.classList.remove('active'); });
+      btn.classList.add('active');
+    });
+  });
+
+  // Input changes
+  document.getElementById('inputText').addEventListener('input', function() {
+    var val = this.value.trim();
+    document.getElementById('inputHint').textContent = isUrl(val) ? 'URL rilevato' : val.length > 0 ? val.length + ' caratteri' : '';
+    document.getElementById('btnOpen').style.display = isUrl(val) ? 'inline-block' : 'none';
+    document.getElementById('btnClear').style.display = val.length > 0 ? 'inline-block' : 'none';
+    document.getElementById('btnTranslate').disabled = val.length === 0;
+  });
+
+  // Clear
+  document.getElementById('btnClear').addEventListener('click', clearAll);
+
+  // Open URL
+  document.getElementById('btnOpen').addEventListener('click', function() {
+    window.open(document.getElementById('inputText').value.trim(), '_blank');
+  });
+
+  // Close result
+  document.getElementById('btnClose').addEventListener('click', function() {
+    document.getElementById('result').style.display = 'none';
+    document.getElementById('resultBody').innerHTML = '';
+  });
+
+  // Copy result
+  document.getElementById('btnCopy').addEventListener('click', function() {
+    var text = document.getElementById('resultBody').innerText;
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(text);
+    } else {
+      var ta = document.createElement('textarea');
+      ta.value = text;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+    }
+  });
+
+  // Elaborate
+  document.getElementById('btnTranslate').addEventListener('click', function() {
+    var input = document.getElementById('inputText').value.trim();
+    if (!input || !apiKey) return;
+
+    document.getElementById('error').style.display = 'none';
+    document.getElementById('result').style.display = 'none';
+    document.getElementById('loading').style.display = 'block';
+    document.getElementById('btnTranslate').disabled = true;
+    document.getElementById('btnTranslate').textContent = 'Elaborazione...';
+
+    function doTranslate(content, inputType) {
+      fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+          'anthropic-dangerous-direct-browser-access': 'true'
+        },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 1000,
+          messages: [{ role: 'user', content: buildPrompt(content, inputType) }]
+        })
+      })
+      .then(function(res) { return res.json(); })
+      .then(function(data) {
+        if (data.error) throw new Error(data.error.message);
+        var text = (data.content || []).map(function(b) { return b.text || ''; }).join('');
+        if (!text) throw new Error('Risposta vuota.');
+        document.getElementById('inputText').value = '';
+        document.getElementById('inputHint').textContent = '';
+        document.getElementById('btnClear').style.display = 'none';
+        document.getElementById('btnOpen').style.display = 'none';
+        document.getElementById('btnTranslate').disabled = true;
+        document.getElementById('resultLabel').textContent = currentMode;
+        document.getElementById('resultBody').innerHTML = renderMarkdown(text);
+        document.getElementById('result').style.display = 'block';
+      })
+      .catch(function(e) {
+        document.getElementById('error').textContent = 'Errore: ' + e.message;
+        document.getElementById('error').style.display = 'block';
+      })
+      .finally(function() { resetBtn(); });
+    }
+
+    if (isUrl(input)) {
+      fetch('https://corsproxy.io/?' + encodeURIComponent(input))
+      .then(function(r) { return r.text(); })
+      .then(function(html) {
+        var tmp = document.createElement('div');
+        tmp.innerHTML = html;
+        ['script','style','nav','footer','header','aside'].forEach(function(tag) {
+          tmp.querySelectorAll(tag).forEach(function(el) { el.remove(); });
+        });
+        var text = (tmp.innerText || tmp.textContent || '').replace(/\s+/g,' ').trim().slice(0,8000);
+        if (text.length < 100) throw new Error('testo troppo breve');
+        doTranslate(text, 'url');
+      })
+      .catch(function() {
+        resetBtn();
+        document.getElementById('error').textContent = 'Impossibile recuperare il testo dall\'URL. Per articoli con paywall copia il testo e incollalo direttamente.';
+        document.getElementById('error').style.display = 'block';
+      });
+    } else {
+      doTranslate(input, 'text');
+    }
+  });
+
+});
+</script>
+
+</body>
+</html>
