@@ -120,6 +120,29 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('app').style.display = 'block';
   }
 
+  // Leggi parametri da URL (?text=... o ?url=...)
+  var urlParams = new URLSearchParams(window.location.search);
+  var paramText = urlParams.get('text');
+  var paramUrl = urlParams.get('url');
+  if ((paramText || paramUrl) && apiKey) {
+    document.getElementById('setup').style.display = 'none';
+    document.getElementById('app').style.display = 'block';
+    var val = paramText || paramUrl;
+    document.getElementById('inputText').value = val;
+    var hint = document.getElementById('inputHint');
+    var btnOpen = document.getElementById('btnOpen');
+    var btnClear = document.getElementById('btnClear');
+    var btnT = document.getElementById('btnTranslate');
+    if (paramUrl) {
+      hint.textContent = 'URL rilevato';
+      btnOpen.style.display = 'inline-block';
+    } else {
+      hint.textContent = val.length + ' caratteri';
+    }
+    btnClear.style.display = 'inline-block';
+    btnT.disabled = false;
+  }
+
   function isUrl(str) {
     try { new URL(str); return true; } catch(e) { return false; }
   }
